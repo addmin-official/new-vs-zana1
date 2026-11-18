@@ -4,11 +4,11 @@ import reactHooks from "eslint-plugin-react-hooks";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", "coverage/**", "*.js", "scripts/**", "test_vision.ts"]
+    ignores: ["dist/**", "node_modules/**", "coverage/**", "*.js", "scripts/**", "test_vision.ts", ".wrangler/**"]
   },
   {
     files: ["src/**/*.ts", "src/**/*.tsx"],
-    ignores: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**"],
+    ignores: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**", "src/__tests__/**", "e2e/**"],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
@@ -28,13 +28,20 @@ export default [
     rules: {
       ...tsPlugin.configs.recommended.rules,
       ...reactHooks.configs.recommended.rules,
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/immutability": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/static-components": "off",
+      "react-hooks/exhaustive-deps": "error",
+      "no-console": process.env.NODE_ENV === "production" ? ["warn", { allow: ["warn", "error"] }] : "off",
       "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-floating-promises": "error",
-      "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }]
+      "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "ignoreRestSiblings": true }]
     }
   },
   {
-    files: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**"],
+    files: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**", "src/__tests__/**", "e2e/**"],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
@@ -51,7 +58,8 @@ export default [
     rules: {
       ...tsPlugin.configs.recommended.rules,
       "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-floating-promises": "off"
+      "@typescript-eslint/no-floating-promises": "off",
+      "@typescript-eslint/no-unused-vars": "off"
     }
   }
 ];

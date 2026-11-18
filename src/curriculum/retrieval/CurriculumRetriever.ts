@@ -18,6 +18,7 @@ export interface RetrievalOptions {
   query?: string;
   maxResults?: number;
   requireRealPdfDocument?: boolean;
+  includePrerequisites?: boolean;
 }
 
 export class CurriculumRetriever {
@@ -41,8 +42,22 @@ export class CurriculumRetriever {
     return this.documentProvider;
   }
 
+  public getIndexService(): CurriculumIndexService {
+    return this.indexService;
+  }
+
   public async retrieve(options: RetrievalOptions): Promise<RetrievalResult> {
-    const { grade, stream, subject, lessonTitle, conceptTitle, query, maxResults = 3, requireRealPdfDocument } = options;
+    const {
+      grade,
+      stream,
+      subject,
+      lessonTitle,
+      conceptTitle,
+      query,
+      maxResults = 5,
+      requireRealPdfDocument,
+      includePrerequisites = true,
+    } = options;
 
     try {
       const evidenceQuery = query || lessonTitle || conceptTitle || "";
@@ -62,14 +77,17 @@ export class CurriculumRetriever {
         return NoSourceFallback.getFallbackResult(grade, subject, query);
       }
 
-      // 2. Structured Curriculum Index search
+      // 2. Structured Curriculum Index search with Hybrid BM25 + Semantic scoring & contextual prerequisites
       const indexEvidence: CurriculumEvidence[] = this.indexService.search(evidenceQuery, {
         limit: maxResults,
         subject,
         grade,
+        stream,
+        includePrerequisites,
       });
 
       const evidence = realDocumentEvidence.length > 0 ? realDocumentEvidence : indexEvidence;
+
 
       // 3. Retrieve raw candidate lessons from provider
       const candidates = await this.provider.retrieveContext(
@@ -165,13 +183,28 @@ export class CurriculumRetriever {
         confidence = Math.max(confidence, evidence[0].score);
       }
 
+      // Strict grounding rule: Do NOT return GROUNDED unless actual text chunks from real documents or authentic registered curriculum content are retrieved
+      const hasRealDocChunks = realDocumentEvidence.length > 0 && realDocumentEvidence.some(
+        (e) => e.contentSnippet && e.contentSnippet.trim().length > 30 && !e.contentSnippet.includes("لاپەڕەی فەرمی پۆلی")
+      );
+      const hasRealIndexChunks = evidence.length > 0 && evidence.some(
+        (e) => e.contentSnippet && e.contentSnippet.trim().length > 30 && !e.contentSnippet.includes("لاپەڕەی فەرمی پۆلی")
+      );
+      const hasAuthenticLessonExcerpts = allowedLessons.length > 0 && allowedLessons.some(
+        (l) => l.contentExcerpts && l.contentExcerpts.some(
+          (c) => c.trim().length > 20 && !c.includes("لاپەڕەی فەرمی پۆلی")
+        )
+      );
+      const isAuthenticallyGrounded = (hasRealDocChunks || hasRealIndexChunks || hasAuthenticLessonExcerpts) && (!requireRealPdfDocument || hasRealDocChunks);
+      const groundingStatus = isAuthenticallyGrounded ? "GROUNDED" : "UNGROUNDED";
+
       return {
-        groundingStatus: "GROUNDED",
+        groundingStatus,
         matchedLessons: allowedLessons,
         matchedConcepts: Array.from(new Set(matchedConcepts)),
         excerpts,
         evidence,
-        confidence,
+        confidence: isAuthenticallyGrounded ? confidence : Math.min(confidence, 0.4),
         sourceMetadata: sourceMetadataList,
         licenseDecision: lastDecision,
         auditMetadata: {

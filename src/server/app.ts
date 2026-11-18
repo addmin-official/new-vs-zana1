@@ -19,6 +19,7 @@ import { StudyTaskStatus, PlanGenerationMode } from "../planning/domain/Learning
 import { PlanRebalancer } from "../planning/engine/PlanRebalancer.ts";
 import { AdaptiveLearningEngine as StudentMasteryAdaptiveEngine } from "../learning/engine/AdaptiveLearningEngine.ts";
 import { CurriculumRegistry } from "../curriculum/registry/CurriculumRegistry.ts";
+import { getChapterOutlineForSubject } from "../curriculum/data/chapterOutlines.ts";
 import { verifyFirebaseIdToken } from "./auth/tokenVerification.ts";
 import { DifficultyLevel, MisconceptionStatus } from "../learning/domain/MasteryTypes.ts";
 import { handleStudyPlanRoute } from "./api/study/plan.ts";
@@ -28,7 +29,10 @@ import { handleFeedbackRoute } from "./api/feedback.ts";
 import { handleTelemetryExportRoute } from "./api/internal/telemetryExport.ts";
 import { handleHealthRoute, handleCurriculumHealthRoute } from "./api/health.ts";
 import { handleStudyRoomsRoute } from "./api/studyRooms.ts";
-import { verifyAdmin } from "../worker/adminGuard.ts";
+import { verifyAdmin, type AdminVerifyResult } from "../worker/adminGuard.ts";
+import { verifyAuthExpress } from "./middleware/authMiddleware.ts";
+import { InternalBrainService } from "../core/brain/InternalBrainService.ts";
+import type { AdminRole, ExecutionPlan, AdminPreferenceMemory } from "../core/brain/types.ts";
 
 dotenv.config();
 
@@ -64,6 +68,8 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
     const check = await verifyAdmin(webReq, {
       VITE_FIREBASE_API_KEY: process.env.VITE_FIREBASE_API_KEY,
       ADMIN_TELEMETRY_SECRET: process.env.ADMIN_TELEMETRY_SECRET,
+      ALLOW_TEST_AUTH_MOCK: process.env.ALLOW_TEST_AUTH_MOCK,
+      ZANA_ENV: process.env.ZANA_ENV,
     });
     if (!check.ok) {
       return res.status(403).json({
@@ -71,6 +77,7 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
         detail: check.error || "دەستگەیشتن ڕەتکرایەوە. تەنها ئادمین دەتوانێت دەستی پێی بگات.",
       });
     }
+    res.locals.admin = check;
     next();
   } catch (err) {
     return res.status(403).json({ error: "Unauthorized", detail: String(err) });
@@ -91,8 +98,8 @@ app.get("/api/health", (req: Request, res: Response) => {
 
 // Curriculum Document Health Endpoint
 app.get("/api/health/curriculum", async (req: Request, res: Response) => {
-  const dummyRequest = new Request("http://localhost/api/health/curriculum", { method: "GET" });
-  const response = await handleCurriculumHealthRoute(dummyRequest, {
+  const healthCheckReq = new Request("http://localhost/api/health/curriculum", { method: "GET" });
+  const response = await handleCurriculumHealthRoute(healthCheckReq, {
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     ZANA_CURRICULUM_DOCUMENT_URI: process.env.ZANA_CURRICULUM_DOCUMENT_URI,
     ZANA_CURRICULUM_DOCUMENT_ID: process.env.ZANA_CURRICULUM_DOCUMENT_ID,
@@ -101,6 +108,13 @@ app.get("/api/health/curriculum", async (req: Request, res: Response) => {
   });
   const data = await response.json();
   res.status(response.status).json(data);
+});
+
+// Curriculum Outline Endpoint
+app.get("/api/curriculum/:subject/:grade/outline", (req: Request, res: Response) => {
+  const subject = String(req.params.subject || "chemistry");
+  const outline = getChapterOutlineForSubject(subject);
+  res.json(outline);
 });
 
 export { classifyError, getClientSafeErrorMessage, logMinimalError, type SafeErrorCategory };
@@ -197,85 +211,106 @@ async function getAuthenticatedStudentId(req: Request): Promise<string> {
 }
 
 // 1. CHAT ENDPOINT
-app.post("/api/chat", rateLimitMiddleware(60, 60 * 1000), async (req: Request, res: Response) => {
-  try {
-    const chatReq = parseChatRequest(req.body);
-    const result = await ProviderAdapter.chat(process.env.GEMINI_API_KEY || "", chatReq);
-    res.json({
-      text: result.text,
-      isEducational: result.isEducational,
-    });
-  } catch (err: unknown) {
-    const category = classifyError(err);
-    logMinimalError("/api/chat", category, err);
-    res.status(category === "validation" ? 400 : 500).json({ error: getClientSafeErrorMessage(category) });
+app.post(
+  "/api/chat",
+  verifyAuthExpress(process.env.FIREBASE_PROJECT_ID),
+  rateLimitMiddleware(60, 60 * 1000),
+  async (req: Request, res: Response) => {
+    try {
+      const chatReq = parseChatRequest(req.body);
+      const result = await ProviderAdapter.chat(process.env.GEMINI_API_KEY || "", chatReq);
+      res.json({
+        text: result.text,
+        isEducational: result.isEducational,
+      });
+    } catch (err: unknown) {
+      const category = classifyError(err);
+      logMinimalError("/api/chat", category, err);
+      res.status(category === "validation" ? 400 : 500).json({ error: getClientSafeErrorMessage(category) });
+    }
   }
-});
+);
 
 // 2. ASSESSMENT ENDPOINT
-app.post("/api/assessment", rateLimitMiddleware(60, 60 * 1000), async (req: Request, res: Response) => {
-  try {
-    const assessReq = parseAssessmentRequest(req.body);
-    const result = await ProviderAdapter.assessment(process.env.GEMINI_API_KEY || "", assessReq);
+app.post(
+  "/api/assessment",
+  verifyAuthExpress(process.env.FIREBASE_PROJECT_ID),
+  rateLimitMiddleware(60, 60 * 1000),
+  async (req: Request, res: Response) => {
+    try {
+      const assessReq = parseAssessmentRequest(req.body);
+      const result = await ProviderAdapter.assessment(process.env.GEMINI_API_KEY || "", assessReq);
 
-    const currentQuestionNum = assessReq.state.currentQuestion;
-    const isLast = currentQuestionNum === 5;
-    let finalLevel: string | null = null;
-    if (isLast) {
-      const correctCount = (assessReq.state.answers || []).filter(Boolean).length + (result.isCorrect ? 1 : 0);
-      if (correctCount <= 2) finalLevel = "سەرەتا";
-      else if (correctCount <= 4) finalLevel = "مامناوەند";
-      else finalLevel = "پێشکەوتوو";
+      const currentQuestionNum = assessReq.state.currentQuestion;
+      const isLast = currentQuestionNum === 5;
+      let finalLevel: string | null = null;
+      if (isLast) {
+        const correctCount = (assessReq.state.answers || []).filter(Boolean).length + (result.isCorrect ? 1 : 0);
+        if (correctCount <= 2) finalLevel = "سەرەتا";
+        else if (correctCount <= 4) finalLevel = "مامناوەند";
+        else finalLevel = "پێشکەوتوو";
+      }
+
+      res.json({
+        question: result.question,
+        feedback: result.feedback,
+        isCorrect: result.isCorrect,
+        completed: isLast,
+        finalLevel,
+      });
+    } catch (err: unknown) {
+      const category = classifyError(err);
+      logMinimalError("/api/assessment", category);
+      res.status(category === "validation" ? 400 : 500).json({ error: getClientSafeErrorMessage(category) });
     }
-
-    res.json({
-      question: result.question,
-      feedback: result.feedback,
-      isCorrect: result.isCorrect,
-      completed: isLast,
-      finalLevel,
-    });
-  } catch (err: unknown) {
-    const category = classifyError(err);
-    logMinimalError("/api/assessment", category);
-    res.status(category === "validation" ? 400 : 500).json({ error: getClientSafeErrorMessage(category) });
   }
-});
+);
 
 // 3. REPORT ENDPOINT
-app.post(["/api/report", "/api/reports"], rateLimitMiddleware(60, 60 * 1000), async (req: Request, res: Response) => {
-  try {
-    const reportReq = parseReportRequest(req.body);
-    const result = await ProviderAdapter.report(process.env.GEMINI_API_KEY || "", reportReq);
-    res.json({
-      recommendation: result.recommendation,
-    });
-  } catch (err: unknown) {
-    const category = classifyError(err);
-    logMinimalError("/api/report", category);
-    res.status(category === "validation" ? 400 : 500).json({ error: getClientSafeErrorMessage(category) });
+app.post(
+  ["/api/report", "/api/reports"],
+  verifyAuthExpress(process.env.FIREBASE_PROJECT_ID),
+  rateLimitMiddleware(60, 60 * 1000),
+  async (req: Request, res: Response) => {
+    try {
+      const reportReq = parseReportRequest(req.body);
+      const result = await ProviderAdapter.report(process.env.GEMINI_API_KEY || "", reportReq);
+      res.json({
+        recommendation: result.recommendation,
+      });
+    } catch (err: unknown) {
+      const category = classifyError(err);
+      logMinimalError("/api/report", category);
+      res.status(category === "validation" ? 400 : 500).json({ error: getClientSafeErrorMessage(category) });
+    }
   }
-});
+);
 
 // 4. STUDY ASK ENDPOINT
-app.post("/api/study/ask", rateLimitMiddleware(60, 60 * 1000), async (req: Request, res: Response) => {
-  try {
-    const askReq = parseAskRequest(req.body);
-    const result = await ProviderAdapter.ask(process.env.GEMINI_API_KEY || "", askReq);
-    res.json({
-      text: result.text,
-      isEducational: result.isEducational,
-    });
-  } catch (err: unknown) {
-    const category = classifyError(err);
-    logMinimalError("/api/study/ask", category);
-    res.status(category === "validation" ? 400 : 500).json({ error: getClientSafeErrorMessage(category) });
+app.post(
+  "/api/study/ask",
+  verifyAuthExpress(process.env.FIREBASE_PROJECT_ID),
+  rateLimitMiddleware(60, 60 * 1000),
+  async (req: Request, res: Response) => {
+    try {
+      const askReq = parseAskRequest(req.body);
+      const result = await ProviderAdapter.ask(process.env.GEMINI_API_KEY || "", askReq);
+      res.json({
+        text: result.text,
+        isEducational: result.isEducational,
+      });
+    } catch (err: unknown) {
+      const category = classifyError(err);
+      logMinimalError("/api/study/ask", category);
+      res.status(category === "validation" ? 400 : 500).json({ error: getClientSafeErrorMessage(category) });
+    }
   }
-});
+);
 
 // 5. STUDY VISION ENDPOINT
 app.post(
   "/api/study/vision",
+  verifyAuthExpress(process.env.FIREBASE_PROJECT_ID),
   rateLimitMiddleware(10, 60 * 1000),
   upload.single("image"),
   async (req: Request, res: Response) => {
@@ -984,27 +1019,145 @@ app.get("/api/internal/telemetry", async (req: Request, res: Response) => {
 });
 
 app.get("/api/admin/brain/status", (req: Request, res: Response) => {
+  const hasGemini = Boolean(process.env.GEMINI_API_KEY);
+  const hasAuth = Boolean(process.env.VITE_FIREBASE_API_KEY);
+  const services = [
+    { name: "Node.js Server Gateway", status: "healthy", latencyMs: 2 },
+    { name: "Gemini Model Gateway", status: hasGemini ? "healthy" : "unconfigured", latencyMs: hasGemini ? 40 : 0 },
+    { name: "Firebase Auth Guard", status: hasAuth ? "healthy" : "unconfigured", latencyMs: hasAuth ? 15 : 0 },
+  ];
+  const isHealthy = services.every((s) => s.status === "healthy");
+
   res.json({
     ok: true,
-    status: "HEALTHY",
-    onlineServices: 6,
-    systemHealth: "Online",
-    level: "Level 0-5 Governed",
+    status: isHealthy ? "HEALTHY" : "DEGRADED",
+    overallHealth: isHealthy ? "healthy" : "degraded",
+    onlineServices: services.filter((s) => s.status === "healthy").length,
+    totalServices: services.length,
+    services,
+    governanceLevel: "Level 0-5 Governed",
+    source: "Express Server Live Status Probe",
     timestamp: new Date().toISOString(),
   });
 });
 
 app.get("/api/admin/brain/metrics", (req: Request, res: Response) => {
+  const brainService = InternalBrainService.getInstance();
+  const auditLog = brainService.getAuditLog();
+  const failures = brainService.getFailureRecords();
+
   res.json({
     ok: true,
-    brainActivity: 15,
-    successRate: "99.4%",
-    incidentsResolved: 1,
-    pendingApprovals: 0,
-    knowledgeGapsTotal: 2,
-    tamperProofAudit: "100%",
+    brainActivity: auditLog.length,
+    activeFailuresCount: failures.filter((f) => f.status === "open").length,
+    incidentsResolved: failures.filter((f) => f.status === "fixed" || f.status === "verified").length,
+    auditLogTotal: auditLog.length,
+    mttd: { available: false, labelKu: "بەردەست نییە (پێویستی بە APM هەیە)" },
+    mttr: { available: false, labelKu: "بەردەست نییە (پێویستی بە APM هەیە)" },
+    decisionLatency: { available: false, labelKu: "بەردەست نییە" },
+    successRate: auditLog.length > 0
+      ? `${Math.round((auditLog.filter((a) => a.executionStatus === "success").length / auditLog.length) * 100)}%`
+      : { available: false, labelKu: "داتامان نییە" },
     timestamp: new Date().toISOString(),
   });
+});
+
+app.post("/api/admin/brain/command/plan", (req: Request, res: Response) => {
+  const admin = res.locals.admin as AdminVerifyResult | undefined;
+  const commandText = (req.body?.command as string) || "";
+  const brainService = InternalBrainService.getInstance();
+  const plan = brainService.prepareExecutionPlan(commandText);
+  const perm = brainService.checkPermission(plan, {
+    id: admin?.uid || "admin",
+    name: admin?.email || "Admin",
+    role: (admin?.role as AdminRole) || "super_admin",
+    email: admin?.email || "admin@example.com",
+    permissions: ["*"],
+  });
+  res.json({ ok: true, plan, permission: perm });
+});
+
+app.post("/api/admin/brain/command/approve", (req: Request, res: Response) => {
+  const admin = res.locals.admin as AdminVerifyResult | undefined;
+  const { plan, isSecondarySignOff } = req.body as { plan?: ExecutionPlan; isSecondarySignOff?: boolean };
+  if (!plan) {
+    return res.status(400).json({ ok: false, error: "Missing plan payload" });
+  }
+  const brainService = InternalBrainService.getInstance();
+  const approverUser = {
+    id: admin?.uid || "admin_uid",
+    name: admin?.email || "Admin Approver",
+    role: (admin?.role as AdminRole) || "super_admin",
+    email: admin?.email || "admin@example.com",
+    permissions: ["*"],
+  };
+  const result = brainService.approvePlan(plan, approverUser, Boolean(isSecondarySignOff));
+  res.status(result.success ? 200 : 400).json({ ok: result.success, ...result, plan });
+});
+
+app.post("/api/admin/brain/command/execute", async (req: Request, res: Response) => {
+  const { plan } = req.body as { plan?: ExecutionPlan };
+  if (!plan) {
+    return res.status(400).json({ ok: false, error: "Missing plan payload" });
+  }
+  const brainService = InternalBrainService.getInstance();
+  const executedPlan = await brainService.executePipeline(plan);
+  const isRejected = executedPlan.requiresApproval && !executedPlan.isApproved;
+  res.status(isRejected ? 400 : 200).json({ ok: !isRejected, plan: executedPlan });
+});
+
+app.post("/api/admin/brain/command/rollback", (req: Request, res: Response) => {
+  const { commandId } = req.body as { commandId?: string };
+  if (!commandId) {
+    return res.status(400).json({ ok: false, error: "Missing commandId" });
+  }
+  const brainService = InternalBrainService.getInstance();
+  const result = brainService.rollbackExecution(commandId);
+  res.status(result.success ? 200 : 400).json({ ok: result.success, ...result });
+});
+
+app.post("/api/admin/brain/golden-tests/run", (req: Request, res: Response) => {
+  const { testId } = req.body as { testId?: string };
+  const brainService = InternalBrainService.getInstance();
+  if (testId) {
+    const r = brainService.runGoldenTest(testId);
+    return res.json({ ok: r.success, ...r });
+  }
+  const allRes = brainService.runAllGoldenTests();
+  res.json({ ok: true, ...allRes });
+});
+
+app.get("/api/admin/brain/audit", (req: Request, res: Response) => {
+  const brainService = InternalBrainService.getInstance();
+  const integrity = brainService.verifyAuditChainIntegrity();
+  res.json({ ok: true, auditLog: brainService.getAuditLog(), integrity });
+});
+
+app.post("/api/admin/brain/audit/checkpoint", (req: Request, res: Response) => {
+  const brainService = InternalBrainService.getInstance();
+  const checkpoint = brainService.createAuditCheckpoint(process.env.AUDIT_HMAC_SECRET);
+  res.json({ ok: true, checkpoint });
+});
+
+app.get("/api/admin/brain/preferences", (req: Request, res: Response) => {
+  const admin = res.locals.admin as AdminVerifyResult | undefined;
+  const brainService = InternalBrainService.getInstance();
+  const preferences = (admin?.role as AdminRole) === "super_admin"
+    ? brainService.getPreferenceMemory()
+    : brainService.getPreferenceMemory(admin?.uid);
+  res.json({ ok: true, preferences });
+});
+
+app.post("/api/admin/brain/preferences", (req: Request, res: Response) => {
+  const admin = res.locals.admin as AdminVerifyResult | undefined;
+  const body = req.body as Partial<AdminPreferenceMemory>;
+  const brainService = InternalBrainService.getInstance();
+  try {
+    const updated = brainService.updatePreferenceMemory(body, admin?.uid || "admin_sys_01");
+    res.json({ ok: true, preference: updated });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: (err as Error).message });
+  }
 });
 
 app.all("/api/study-rooms*", async (req: Request, res: Response) => {

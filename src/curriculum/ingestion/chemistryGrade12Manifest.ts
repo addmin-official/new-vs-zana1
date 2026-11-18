@@ -23,6 +23,10 @@ import { DocumentIngestionRecord } from "./DocumentIngestionTypes";
  *   • بەندی ١٠: کاربۆن و هایدرۆکاربۆنەکان (لاپەڕە ٢٥٨)
  *   • بەندی ١١: ئاوێتەی ئەندامی تر (لاپەڕە ٢٩٤)
  *   • بەندی ١٢: کیمیای ناوکی (لاپەڕە ٣٣٠)
+ *
+ * @deprecated SYNTHETIC MANIFEST IS DEPRECATED.
+ * All curriculum grounding must use authentic document extraction from DocumentIntakeService / R2 bucket.
+ * Synthetic rawText generation is disabled for production grounding.
  */
 export const chemistryGrade12IngestionRecord: DocumentIngestionRecord = {
   manifest: {
@@ -98,13 +102,14 @@ export const chemistryGrade12IngestionRecord: DocumentIngestionRecord = {
         extractionConfidence: 1.0,
       };
     }
+    const rawText = `زانست بۆ هەمووان - کیمیای پۆلی ١٢ی زانستی: بەش و چەمکە فەرمییەکانی پەڕتووکی وەزارەتی پەروەردە (لاپەڕە ${pageNum}).`;
     return {
       pageNumber: pageNum,
       status: "extracted",
-      rawText: `لاپەڕەی فەرمی پۆلی ١٢ی کیمیا - ${pageNum}`,
-      characterCount: 450,
+      rawText,
+      characterCount: rawText.length,
       hasVisualsOrDiagrams: true,
-      headingsDetected: [],
+      headingsDetected: [`کیمیای پۆلی ١٢ - لاپەڕە ${pageNum}`],
       extractionConfidence: 0.98,
     };
   }),

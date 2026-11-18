@@ -394,10 +394,13 @@ export interface PlanStep {
 export interface DualApprovalState {
   primaryApproved: boolean;
   primaryApprover?: string;
+  primaryApproverId?: string;
   primaryTimestamp?: string;
   secondaryApproved: boolean;
   secondaryApprover?: string;
+  secondaryApproverId?: string;
   secondaryTimestamp?: string;
+  expiresAt?: string;
 }
 
 export interface ExecutionPlan {
@@ -430,6 +433,7 @@ export interface ExecutionPlan {
   resultReportKu?: string;
   learningsRecorded?: string[];
   affectedFiles?: string[];
+  isExecuted?: boolean;
 }
 
 export interface AuditLogEntry {
@@ -448,9 +452,12 @@ export interface AuditLogEntry {
   riskLevel: RiskLevel;
   approvedBy?: string;
   dualApprovedBy?: string;
-  executionStatus: 'success' | 'failure' | 'rolled_back' | 'rejected' | 'security_blocked';
+  executionStatus: 'success' | 'failure' | 'rolled_back' | 'rejected' | 'security_blocked' | 'rollback_completed' | 'rollback_failed';
   verificationPassed: boolean;
   rollbackEligible: boolean;
   tamperProofHash: string;
   previousHash: string;
+  revertsAuditId?: string;
+  revertsCommandId?: string;
+  snapshotId?: string;
 }

@@ -4,6 +4,12 @@
   "main": "src/worker/index.ts",
   "compatibility_date": "2025-02-04",
   "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "zana.idggov.tech",
+      "custom_domain": true
+    }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
@@ -55,7 +61,7 @@
     ]
   },
   "vars": {
-    "ALLOWED_ORIGINS": "https://zana.krd,https://new-vs-zana.zana-platform.workers.dev",
+    "ALLOWED_ORIGINS": "https://zana.idggov.tech,https://new-vs-zana.zana-platform.workers.dev",
     "GEMINI_PRIMARY_MODEL": "gemini-3.6-flash",
     "GEMINI_VISION_MODEL": "gemini-3.6-flash",
     "FIREBASE_PROJECT_ID": "gen-lang-client-0009572581",
@@ -64,7 +70,7 @@
     "VITE_FIREBASE_AUTH_DOMAIN": "gen-lang-client-0009572581.firebaseapp.com",
     "VITE_FIREBASE_PROJECT_ID": "gen-lang-client-0009572581",
     "VITE_FIREBASE_STORAGE_BUCKET": "gen-lang-client-0009572581.firebasestorage.app",
-    "ZANA_REVISION": "606babb"
+    "ZANA_REVISION": "a867339"
   },
   "kv_namespaces": [
     {
@@ -88,6 +94,20 @@
       "binding": "DB",
       "database_name": "new-vs-zana",
       "database_id": "b8929b42-eaae-42c4-a364-b601ab285be5"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ADMIN_COMMAND_DO",
+        "class_name": "AdminCommandDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AdminCommandDO"]
     }
   ]
 }

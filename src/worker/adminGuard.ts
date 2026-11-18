@@ -1,7 +1,10 @@
+import { verifyFirebaseIdToken, type VerifyJwtResult } from "./jwtVerifier.ts";
+
 export interface AdminVerifyResult {
   ok: boolean;
   uid?: string;
   email?: string;
+  role?: string;
   error?: string;
 }
 
@@ -11,7 +14,13 @@ export async function verifyAdmin(
   request: Request,
   env: {
     VITE_FIREBASE_API_KEY?: string;
+    FIREBASE_PROJECT_ID?: string;
+    VITE_FIREBASE_PROJECT_ID?: string;
     ADMIN_TELEMETRY_SECRET?: string;
+    ADMIN_EMAIL?: string;
+    ADMIN_EMAILS?: string;
+    ALLOW_TEST_AUTH_MOCK?: string;
+    ZANA_ENV?: string;
     JWT_SECRET?: string;
     [key: string]: unknown;
   }
@@ -26,30 +35,58 @@ export async function verifyAdmin(
     return { ok: false, error: "Empty Bearer token" };
   }
 
-  // Allow machine-to-machine admin secret (e.g. telemetry or internal cron)
+  // Resolve authorized admin emails list
+  const configuredEmails = [
+    ...ADMIN_EMAILS,
+    ...(typeof env.ADMIN_EMAIL === "string" ? [env.ADMIN_EMAIL] : []),
+    ...(typeof env.ADMIN_EMAILS === "string" ? env.ADMIN_EMAILS.split(",").map((e) => e.trim()) : []),
+  ].map((e) => e.toLowerCase());
+
+  // 1. Machine-to-Machine Secret (Telemetry / Cron / Internal)
   if (env.ADMIN_TELEMETRY_SECRET && token === env.ADMIN_TELEMETRY_SECRET) {
-    return { ok: true, uid: "system-admin", email: ADMIN_EMAILS[0] };
+    return {
+      ok: true,
+      uid: "system-admin",
+      email: configuredEmails[0] || ADMIN_EMAILS[0],
+      role: "system_admin",
+    };
   }
 
-  // Verify Firebase ID Token via Google Identity Toolkit API
+  const projectId = String(
+    env.FIREBASE_PROJECT_ID ||
+    env.VITE_FIREBASE_PROJECT_ID ||
+    (typeof process !== "undefined" ? (process.env?.FIREBASE_PROJECT_ID || process.env?.VITE_FIREBASE_PROJECT_ID) : undefined) ||
+    "gen-lang-client-0009572581"
+  );
+
+  // Check test auth mode permission: strictly restricted to test environments only
+  const zanaEnv = (env.ZANA_ENV ?? (typeof process !== "undefined" ? (process.env?.ZANA_ENV || process.env?.NODE_ENV) : undefined)) as string | undefined;
+  const isTestEnvironment = zanaEnv === "test";
+  const testMockFlag = env.ALLOW_TEST_AUTH_MOCK ?? (typeof process !== "undefined" ? process.env?.ALLOW_TEST_AUTH_MOCK : undefined);
+  const allowTestMock = testMockFlag === "true" && isTestEnvironment;
+
+  // 2. Cryptographic Verification via Web Crypto API (Cached RS256 JWKS)
+  const jwkResult: VerifyJwtResult = await verifyFirebaseIdToken(token, projectId, {
+    allowTestMock,
+    configuredEmails,
+  });
+
+  if (jwkResult.ok) {
+    return {
+      ok: true,
+      uid: jwkResult.uid,
+      email: jwkResult.email,
+      role: jwkResult.role,
+    };
+  }
+
+  // If in test environment with test credentials, return the rejection
+  if (allowTestMock) {
+    return { ok: false, error: jwkResult.error || "Unauthorized in test mode" };
+  }
+
+  // 3. Fallback: Online Lookup via Google Identity Toolkit (if API key present)
   const apiKey = (env.VITE_FIREBASE_API_KEY || (typeof process !== "undefined" ? process.env?.VITE_FIREBASE_API_KEY : undefined)) as string | undefined;
-
-  // First, parse unverified JWT payload for instant fast-check if token structure is valid
-  let decodedPayload: Record<string, unknown> | null = null;
-  try {
-    const parts = token.split(".");
-    if (parts.length === 3) {
-      const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-      const jsonStr = typeof atob === "function"
-        ? atob(base64)
-        : Buffer.from(base64, "base64").toString("utf-8");
-      decodedPayload = JSON.parse(jsonStr) as Record<string, unknown>;
-    }
-  } catch {
-    // Ignore payload parse error; proceed to identitytoolkit
-  }
-
-  // If we have an API key, perform online lookup via Google Identity Toolkit
   if (apiKey) {
     try {
       const res = await fetch(
@@ -61,58 +98,53 @@ export async function verifyAdmin(
         }
       );
 
-      if (res.ok) {
-        const data = (await res.json()) as {
-          users?: Array<{
-            localId: string;
-            email?: string;
-            customAttributes?: string;
-          }>;
-        };
-        const user = data.users?.[0];
-        if (!user) {
-          return { ok: false, error: "User not found" };
-        }
-
-        const userEmail = (user.email || "").toLowerCase();
-        let hasAdminClaim = false;
-        if (user.customAttributes) {
-          try {
-            const parsedClaims = JSON.parse(user.customAttributes) as Record<string, unknown>;
-            if (parsedClaims.admin === true || parsedClaims.role === "SuperAdmin") {
-              hasAdminClaim = true;
-            }
-          } catch {
-            // Ignore customAttributes parse error
-          }
-        }
-
-        const isAuthorizedEmail = Boolean(userEmail && ADMIN_EMAILS.includes(userEmail));
-        if (!isAuthorizedEmail && !hasAdminClaim) {
-          return { ok: false, error: "User is not an admin" };
-        }
-
-        return { ok: true, uid: user.localId, email: user.email || ADMIN_EMAILS[0] };
+      if (!res.ok) {
+        return { ok: false, error: `Authentication failed: Google Identity Toolkit returned ${res.status}` };
       }
-    } catch {
-      // In offline / mock test environments, fall back to validated JWT payload
-    }
-  }
 
-  // Offline / test fallback validation
-  if (decodedPayload) {
-    const email = typeof decodedPayload.email === "string" ? decodedPayload.email.toLowerCase() : "";
-    const hasAdminClaim = decodedPayload.admin === true || decodedPayload.role === "SuperAdmin";
-    const isAuthorizedEmail = Boolean(email && ADMIN_EMAILS.includes(email));
+      const data = (await res.json()) as {
+        users?: Array<{
+          localId: string;
+          email?: string;
+          customAttributes?: string;
+        }>;
+      };
+      const user = data.users?.[0];
+      if (!user) {
+        return { ok: false, error: "User not found" };
+      }
 
-    if (isAuthorizedEmail || hasAdminClaim) {
+      const userEmail = (user.email || "").toLowerCase();
+      let hasAdminClaim = false;
+      let userRole = "system_admin";
+      if (user.customAttributes) {
+        try {
+          const parsedClaims = JSON.parse(user.customAttributes) as Record<string, unknown>;
+          if (parsedClaims.admin === true || parsedClaims.role === "SuperAdmin" || parsedClaims.role === "super_admin") {
+            hasAdminClaim = true;
+            userRole = (parsedClaims.role as string) || "super_admin";
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const isAuthorizedEmail = Boolean(userEmail && configuredEmails.includes(userEmail));
+      if (!isAuthorizedEmail && !hasAdminClaim) {
+        return { ok: false, error: "User is not an admin" };
+      }
+
       return {
         ok: true,
-        uid: (decodedPayload.user_id || decodedPayload.sub || "admin-user") as string,
-        email: email || ADMIN_EMAILS[0],
+        uid: user.localId,
+        email: user.email || configuredEmails[0],
+        role: userRole,
       };
+    } catch {
+      return { ok: false, error: "Authentication failed: unable to verify credentials with identity provider" };
     }
   }
 
-  return { ok: false, error: "Unauthorized: Invalid admin credentials or claims" };
+  // 4. Default Deny
+  return { ok: false, error: jwkResult.error || "Unauthorized: Verification service unavailable (deny-by-default)" };
 }

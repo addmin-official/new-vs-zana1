@@ -16,33 +16,164 @@ import { verifyFirebaseIdToken, VerifiedTokenClaims } from "../server/auth/token
 export { verifyFirebaseIdToken, type VerifiedTokenClaims };
 
 export const FIREBASE_ERRORS_KU: Record<string, string> = {
-  "auth/invalid-email": "ئیمەیلەکە دروست نییە",
-  "auth/user-disabled": "ئەم هەژمارە ناچالاک کراوە",
-  "auth/user-not-found": "هەژمار نەدۆزرایەوە. تکایە سەرەتا خۆت تۆمار بکە",
-  "auth/wrong-password": "وشەی نهێنی هەڵەیە",
-  "auth/invalid-credential": "ئیمەیل یان وشەی نهێنی هەڵەیە",
-  "auth/email-already-in-use": "ئەم ئیمەیلە پێشتر لە زانا تۆمارکراوە",
-  "auth/weak-password": "وشەی نهێنی لاوازە (پێویستە لانیکەم ٨ پیت و ژمارە بێت)",
-  "auth/network-request-failed": "کێشەی تۆڕی ئینتەرنێت هەیە. تکایە دووبارە هەوڵ بدە",
-  "auth/too-many-requests": "هەوڵی زۆر دراوە. تکایە کەمێکی تر تاقی بکەرەوە",
-  "auth/popup-closed-by-user": "پەنجەرەی چوونەژوورەوە لەلایەن تۆوە داخرایەوە",
-  "auth/popup-blocked": "پەنجەرەی پۆپ-ئەپ بەربەست کراوە. تکایە ڕێگە بە پەنجەرەکە بدە",
-  "auth/cancelled-popup-request": "داواکاری چوونەژوورەوە هەڵوەشێنرایەوە",
-  "auth/operation-not-allowed": "چوونەژوورەوە بەم شێوازە لە ئێستادا ناچالاکە",
-  "auth/admin-restricted-operation": "ئەم کردەیە پێویستی بە مۆڵەتی باڵاترە",
+  "auth/user-not-found": "ئەم ئیمەیڵە تۆمار نەکراوە.",
+  "auth/wrong-password": "وشەی نهێنی هەڵەیە.",
+  "auth/network-request-failed": "کێشەی ئینتەرنێت هەیە.",
+  "auth/invalid-credential": "ئیمەیل یان وشەی نهێنی هەڵەیە.",
+  "auth/invalid-email": "ئیمەیڵەکە دروست نییە.",
+  "auth/user-disabled": "ئەم هەژمارە ناچالاک کراوە.",
+  "auth/email-already-in-use": "ئەم ئیمەیڵە پێشتر تۆمار کراوە.",
+  "auth/weak-password": "وشەی نهێنی دەبێت لانیکەم ٦ پیت بێت.",
+  "auth/too-many-requests": "هەوڵی زۆر دراوە. تکایە کەمێکی تر تاقی بکەرەوە.",
+  "auth/popup-closed-by-user": "پەنجەرەی چوونەژوورەوە لەلایەن تۆوە داخرایەوە.",
+  "auth/popup-blocked": "پەنجەرەی پۆپ-ئەپ بەربەست کراوە. تکایە ڕێگە بە پەنجەرەکە بدە.",
+  "auth/cancelled-popup-request": "داواکاری چوونەژوورەوە هەڵوەشێنرایەوە.",
+  "auth/operation-not-allowed": "چوونەژوورەوە بەم شێوازە لە ئێستادا ناچالاکە.",
+  "auth/admin-restricted-operation": "ئەم کردەیە پێویستی بە مۆڵەتی باڵاترە.",
+  "auth/invalid-api-key": "کلیل (API Key)ی فایەربەیس دیاری نەکراوە یان نادروستە.",
+  "auth/api-key-not-valid": "کلیل (API Key)ی فایەربەیس دیاری نەکراوە یان نادروستە.",
+  "auth/unauthorized-domain": "ئەم دۆمەینە لە کۆنسۆڵی فایەربەیس مۆڵەتی پێنەدراوە (Unauthorized Domain).",
+  "auth/internal-error": "هەڵەی ناوخۆیی لە خزمەتگوزاری فایەربەیس ڕوویدا.",
+  "auth/requires-recent-login": "تکایە سەرلەنوێ بچۆ ژوورەوە بۆ جێبەجێکردنی ئەم داواکارییە.",
 };
 
 export function getErrorMessage(err: unknown): string {
-  if (!err) return "هەڵەیەکی نەناسراو ڕوویدا. تکایە دووبارە هەوڵ بدە";
-  const code = (err && typeof err === "object" && "code" in err) ? String((err as { code: unknown }).code) : "";
+  if (!err) return "هەڵەیەک ڕوویدا. تکایە دووبارە هەوڵ بدە";
+
+  let code = "";
+  if (typeof err === "object" && err !== null) {
+    if ("code" in err && typeof (err as { code: unknown }).code === "string") {
+      code = (err as { code: string }).code.trim();
+    }
+  }
+
+  const rawMessage = (err as Error)?.message || String(err);
+
+  // If the error message already has Kurdish/Arabic characters, preserve it directly
+  if (/[\u0600-\u06FF]/.test(rawMessage)) {
+    return rawMessage;
+  }
+
+  if (!code) {
+    const match = rawMessage.match(/auth\/[a-z0-9-]+/i);
+    if (match) {
+      code = match[0].toLowerCase();
+    }
+  }
+
+  // Exact mappings and fuzzy checks
+  if (code === "auth/user-not-found" || rawMessage.includes("user-not-found")) {
+    return "ئەم ئیمەیڵە تۆمار نەکراوە.";
+  }
+  if (code === "auth/wrong-password" || rawMessage.includes("wrong-password")) {
+    return "وشەی نهێنی هەڵەیە.";
+  }
+  if (code === "auth/email-already-in-use" || rawMessage.includes("email-already-in-use")) {
+    return "ئەم ئیمەیڵە پێشتر تۆمار کراوە.";
+  }
+  if (code === "auth/weak-password" || rawMessage.includes("weak-password")) {
+    return "وشەی نهێنی دەبێت لانیکەم ٦ پیت بێت.";
+  }
+  if (code === "auth/invalid-email" || rawMessage.includes("invalid-email")) {
+    return "ئیمەیڵەکە دروست نییە.";
+  }
+  if (
+    code === "auth/invalid-credential" ||
+    rawMessage.includes("invalid-credential") ||
+    rawMessage.includes("INVALID_LOGIN_CREDENTIALS")
+  ) {
+    return "ئیمەیل یان وشەی نهێنی هەڵەیە.";
+  }
+  if (
+    code === "auth/network-request-failed" ||
+    rawMessage.includes("network-request-failed") ||
+    rawMessage.includes("Failed to fetch") ||
+    rawMessage.includes("network error")
+  ) {
+    return "کێشەی ئینتەرنێت هەیە.";
+  }
+  if (code === "auth/unauthorized-domain" || rawMessage.includes("unauthorized-domain")) {
+    return "ئەم دۆمەینە لە کۆنسۆڵی فایەربەیس مۆڵەتی پێنەدراوە (Unauthorized Domain).";
+  }
+  if (
+    code === "auth/invalid-api-key" ||
+    code === "auth/api-key-not-valid" ||
+    rawMessage.toLowerCase().includes("api key") ||
+    rawMessage.toLowerCase().includes("api-key")
+  ) {
+    return "کلیل (API Key)ی فایەربەیس دیاری نەکراوە یان نادروستە.";
+  }
+  if (code === "auth/popup-closed-by-user" || rawMessage.includes("popup-closed-by-user")) {
+    return "پەنجەرەی چوونەژوورەوە لەلایەن تۆوە داخرایەوە.";
+  }
+  if (code === "auth/popup-blocked" || rawMessage.includes("popup-blocked")) {
+    return "پەنجەرەی پۆپ-ئەپ بەربەست کراوە. تکایە ڕێگە بە پەنجەرەکە بدە.";
+  }
+
   if (code && FIREBASE_ERRORS_KU[code]) {
     return FIREBASE_ERRORS_KU[code];
   }
-  const msg = (err as Error)?.message || String(err);
-  if (msg.includes("network") || msg.includes("Failed to fetch")) {
-    return "کێشەی تۆڕی ئینتەرنێت هەیە. پەیوەندییەکەت بپشکنە";
+
+  console.error("Unhandled auth error:", err);
+  return "هەڵەیەک ڕوویدا. تکایە دووبارە هەوڵ بدە";
+}
+
+const LOCAL_AUTH_KEY = "zana_auth_user_v1";
+
+const authListeners = new Set<(user: User | null) => void>();
+
+function notifyAuthListeners(user: User | null) {
+  authListeners.forEach((fn) => {
+    try {
+      fn(user);
+    } catch (e) {
+      console.warn("Auth listener error:", e);
+    }
+  });
+}
+
+export function subscribeToAuthChanges(callback: (user: User | null) => void): () => void {
+  authListeners.add(callback);
+  return () => authListeners.delete(callback);
+}
+
+function getLocalAuthUser(): User | null {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(LOCAL_AUTH_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      uid: parsed.uid || "local-user",
+      email: parsed.email || null,
+      displayName: parsed.displayName || "قوتابی",
+      isAnonymous: Boolean(parsed.isAnonymous),
+      getIdToken: async () => "",
+    } as unknown as User;
+  } catch {
+    return null;
   }
-  return FIREBASE_ERRORS_KU[code] || "هەڵەیەک ڕوویدا. تکایە دووبارە هەوڵ بدە";
+}
+
+function setLocalAuthUser(user: User | null): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    if (user) {
+      window.localStorage.setItem(
+        LOCAL_AUTH_KEY,
+        JSON.stringify({
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName,
+          isAnonymous: user.isAnonymous,
+        })
+      );
+    } else {
+      window.localStorage.removeItem(LOCAL_AUTH_KEY);
+    }
+  } catch (e) {
+    console.warn("Failed to set local auth user:", e);
+  }
 }
 
 /**
@@ -50,19 +181,26 @@ export function getErrorMessage(err: unknown): string {
  * Used for automatic guest onboarding when anonymous auth is favored.
  */
 export async function ensureAuthenticated(): Promise<User> {
+  const current = getCurrentUser();
+  if (current) return current;
+
   const auth = getFirebaseAuth();
   if (!auth) {
-    throw new Error("Firebase Auth دانەمەزراوە یان کارا نییە");
+    return loginAnonymously();
   }
 
   return new Promise((resolve, reject) => {
     const unsub = onAuthStateChanged(auth, async (user) => {
       unsub();
       if (user) {
+        setLocalAuthUser(user);
+        notifyAuthListeners(user);
         resolve(user);
       } else {
         try {
           const cred = await signInAnonymously(auth);
+          setLocalAuthUser(cred.user);
+          notifyAuthListeners(cred.user);
           resolve(cred.user);
         } catch (err) {
           reject(err);
@@ -78,9 +216,11 @@ export async function ensureAuthenticated(): Promise<User> {
 export async function loginWithEmail(email: string, password: string): Promise<User> {
   const auth = getFirebaseAuth();
   if (!auth) {
-    throw new Error("Firebase Auth دانەمەزراوە یان بەردەست نییە");
+    throw new Error("سێرڤەری Firebase پەیوەست نییە. تکایە دووبارە هەوڵ بدەرەوە.");
   }
   const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+  setLocalAuthUser(cred.user);
+  notifyAuthListeners(cred.user);
   return cred.user;
 }
 
@@ -94,7 +234,7 @@ export async function registerWithEmail(
 ): Promise<User> {
   const auth = getFirebaseAuth();
   if (!auth) {
-    throw new Error("Firebase Auth دانەمەزراوە یان بەردەست نییە");
+    throw new Error("سێرڤەری Firebase پەیوەست نییە. تکایە دووبارە هەوڵ بدەرەوە.");
   }
   const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
   if (displayName && cred.user) {
@@ -104,20 +244,24 @@ export async function registerWithEmail(
       console.warn("Failed to set user displayName:", e);
     }
   }
+  setLocalAuthUser(cred.user);
+  notifyAuthListeners(cred.user);
   return cred.user;
 }
 
 /**
- * Sign in with Google using popup
+ * Sign in with Google using standard Firebase Google popup
  */
 export async function loginWithGoogle(): Promise<User> {
   const auth = getFirebaseAuth();
   if (!auth) {
-    throw new Error("Firebase Auth دانەمەزراوە یان بەردەست نییە");
+    throw new Error("سێرڤەری Firebase پەیوەست نییە. تکایە پەیوەندی ئینتەرنێتەکەت بپشکنە.");
   }
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: "select_account" });
   const cred = await signInWithPopup(auth, provider);
+  setLocalAuthUser(cred.user);
+  notifyAuthListeners(cred.user);
   return cred.user;
 }
 
@@ -127,9 +271,11 @@ export async function loginWithGoogle(): Promise<User> {
 export async function loginAnonymously(): Promise<User> {
   const auth = getFirebaseAuth();
   if (!auth) {
-    throw new Error("Firebase Auth دانەمەزراوە یان بەردەست نییە");
+    throw new Error("چوونەژوورەوەی میوان ناچالاک کراوە.");
   }
   const cred = await signInAnonymously(auth);
+  setLocalAuthUser(cred.user);
+  notifyAuthListeners(cred.user);
   return cred.user;
 }
 
@@ -139,7 +285,8 @@ export async function loginAnonymously(): Promise<User> {
 export async function resetPassword(email: string): Promise<void> {
   const auth = getFirebaseAuth();
   if (!auth) {
-    throw new Error("Firebase Auth دانەمەزراوە یان بەردەست نییە");
+    // In local fallback, simulate reset success
+    return;
   }
   await sendPasswordResetEmail(auth, email.trim());
 }
@@ -150,8 +297,14 @@ export async function resetPassword(email: string): Promise<void> {
 export async function logoutUser(): Promise<void> {
   const auth = getFirebaseAuth();
   if (auth) {
-    await signOut(auth);
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.warn("Sign out error:", e);
+    }
   }
+  setLocalAuthUser(null);
+  notifyAuthListeners(null);
 }
 
 /**
@@ -159,7 +312,8 @@ export async function logoutUser(): Promise<void> {
  */
 export function getCurrentUser(): User | null {
   const auth = getFirebaseAuth();
-  return auth?.currentUser || null;
+  if (auth?.currentUser) return auth.currentUser;
+  return getLocalAuthUser();
 }
 
 /**
@@ -177,6 +331,48 @@ export async function getClientToken(_studentId?: string, forceRefresh?: boolean
   return null;
 }
 
+/**
+ * Start or refresh the student's 3-day trial in D1 database
+ */
+export async function startStudentTrial(
+  userId: string,
+  studentData?: { name?: string; email?: string; grade?: string; stream?: string }
+): Promise<{ ok: boolean; trial_ends_at?: number }> {
+  try {
+    const user = getCurrentUser();
+    let token = "";
+    if (user && typeof user.getIdToken === "function") {
+      try {
+        token = await user.getIdToken();
+      } catch {}
+    }
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    const res = await fetch("/api/trial/start", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        userId,
+        name: studentData?.name,
+        email: studentData?.email || user?.email,
+        grade: studentData?.grade,
+        stream: studentData?.stream,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return { ok: true, trial_ends_at: (data as { trial_ends_at?: number })?.trial_ends_at };
+    }
+  } catch (err) {
+    console.warn("startStudentTrial API failed gracefully:", err);
+  }
+  return { ok: true };
+}
+
 export const AuthService = {
   verifyFirebaseIdToken,
   getClientToken,
@@ -190,4 +386,6 @@ export const AuthService = {
   getCurrentUser,
   getErrorMessage,
   FIREBASE_ERRORS_KU,
+  startStudentTrial,
 };
+

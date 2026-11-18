@@ -87,6 +87,23 @@ jobs:
           set -euo pipefail
           npm test 2>&1 | tee test.log
 
+      # STAGE 3.6: Vitest Unit & Coverage Gate (70% Threshold)
+      - name: Run Vitest Unit Tests with Coverage
+        run: |
+          set -euo pipefail
+          npx vitest run --coverage 2>&1 | tee vitest-coverage.log
+
+      # STAGE 3.7: Playwright Headless E2E Tests (Chromium)
+      - name: Install Playwright Chromium & Dependencies
+        run: |
+          set -euo pipefail
+          npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E Tests
+        run: |
+          set -euo pipefail
+          npx playwright test --project=chromium 2>&1 | tee playwright.log
+
       - name: Save Pipeline Start Time
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
@@ -188,6 +205,23 @@ jobs:
           fi
 
           echo "Explicit client output verification succeeded."
+
+      # STAGE 4.2.1: Bundle Size Budget Verification (< 150KB gzipped entry)
+      - name: Verify Initial Bundle Size Budget (< 150KB gzipped)
+        run: |
+          set -euo pipefail
+          INDEX_JS=$(find dist/client/assets -type f -name "index-*.js" | head -n 1)
+          if [ -z "$INDEX_JS" ] || [ ! -f "$INDEX_JS" ]; then
+            echo "::error::Primary entrypoint index-*.js not found in dist/client/assets!"
+            exit 1
+          fi
+          GZIP_SIZE=$(gzip -c "$INDEX_JS" | wc -c)
+          echo "Primary entrypoint: $INDEX_JS (Gzipped: $GZIP_SIZE bytes)"
+          if [ "$GZIP_SIZE" -gt 153600 ]; then
+            echo "::error::Initial bundle ($GZIP_SIZE bytes gzipped) exceeds 150KB budget limit!"
+            exit 1
+          fi
+          echo "Initial bundle size check passed: $GZIP_SIZE bytes (< 150KB target)."
 
       # STAGE 4.3: Worker Validation (Only runs after dist/client exists)
       - name: Build Worker (Validation)
@@ -365,6 +399,17 @@ jobs:
           npx wrangler deploy --config wrangler.production.json --dry-run
           echo "Dry-run result: PASS"
 
+      # STAGE 5.5: Apply Remote D1 Database Migrations
+      - name: Apply Remote D1 Database Migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          echo "Applying D1 database migrations before deployment..."
+          npx wrangler d1 migrations apply DB --remote --config wrangler.production.json
+          echo "Remote D1 migrations applied successfully."
+
       # STAGE 6: Deploy Cloudflare Worker
       - name: Deploy Cloudflare Worker
         env:
@@ -422,12 +467,12 @@ jobs:
       - name: Verify Worker Health & CORS
         env:
           CLEANED_URL: ${{ secrets.VITE_API_BASE_URL }}
-          CANONICAL_FRONTEND_ORIGIN: ${{ secrets.ZANA_FRONTEND_ORIGIN || 'https://zana.krd' }}
+          CANONICAL_FRONTEND_ORIGIN: ${{ secrets.ZANA_FRONTEND_ORIGIN || 'https://zana.idggov.tech' }}
         run: |
           set -euo pipefail
           
           CLEANED_URL=$(echo "$CLEANED_URL" | sed 's/\/$//')
-          FRONTEND_ORIGIN="${CANONICAL_FRONTEND_ORIGIN:-https://zana.krd}"
+          FRONTEND_ORIGIN="${CANONICAL_FRONTEND_ORIGIN:-https://zana.idggov.tech}"
           export CLEANED_URL FRONTEND_ORIGIN
           echo "Verifying live Cloudflare Worker at: $CLEANED_URL"
           echo "Using canonical frontend origin: $FRONTEND_ORIGIN"
@@ -564,12 +609,12 @@ jobs:
       - name: Verify Production Provider Preflight
         env:
           CLEANED_URL: ${{ secrets.VITE_API_BASE_URL }}
-          CANONICAL_FRONTEND_ORIGIN: ${{ secrets.ZANA_FRONTEND_ORIGIN || 'https://zana.krd' }}
+          CANONICAL_FRONTEND_ORIGIN: ${{ secrets.ZANA_FRONTEND_ORIGIN || 'https://zana.idggov.tech' }}
           PROVIDER_PREFLIGHT_TOKEN: ${{ secrets.PROVIDER_PREFLIGHT_TOKEN }}
         run: |
           set -euo pipefail
           CLEANED_URL=$(echo "$CLEANED_URL" | sed 's/\/$//')
-          FRONTEND_ORIGIN="${CANONICAL_FRONTEND_ORIGIN:-https://zana.krd}"
+          FRONTEND_ORIGIN="${CANONICAL_FRONTEND_ORIGIN:-https://zana.idggov.tech}"
           echo "Verifying production AI provider preflight at ${CLEANED_URL}/api/provider/preflight..."
           
           # 1. Unauthenticated check (must fail with 401)
@@ -716,7 +761,7 @@ jobs:
       - name: Run Production Smoke Tests
         env:
           API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
-          ZANA_FRONTEND_ORIGIN: ${{ secrets.ZANA_FRONTEND_ORIGIN || 'https://zana.krd' }}
+          ZANA_FRONTEND_ORIGIN: ${{ secrets.ZANA_FRONTEND_ORIGIN || 'https://zana.idggov.tech' }}
         run: |
           set -euo pipefail
           npm run test:smoke 2>&1 | tee smoke-test-report.log
@@ -740,13 +785,20 @@ jobs:
           set -euo pipefail
           echo "Scanning codebase for security exposures..."
           
-          FORBIDDEN_FILES=(".env" ".env.production" "wrangler.toml" "wrangler.production.json" "firebase-service-account.json")
+          FORBIDDEN_FILES=(".env" ".env.production" ".env.local" ".env.staging" "wrangler.toml" "wrangler.production.json" "firebase-service-account.json")
           for file in "${FORBIDDEN_FILES[@]}"; do
             if [ -f "$file" ]; then
               echo "::error::Security Exposure Check Failed: Forbidden file '$file' exists in the codebase!"
               exit 1
             fi
           done
+
+          echo "Scanning for exposed environment files..."
+          if find . -maxdepth 2 -name ".env*" ! -name ".env.example" | grep -q .; then
+            echo "::error::Security Exposure Check Failed: Found committed or uncommitted .env file!"
+            find . -maxdepth 2 -name ".env*" ! -name ".env.example"
+            exit 1
+          fi
 
           echo "Scanning for private keys..."
           if grep -r -l "BEGIN PRIVATE KEY" --exclude-dir=node_modules --exclude=package.json --exclude=package-lock.json --exclude-dir=.github .; then
@@ -759,7 +811,7 @@ jobs:
   release:
     name: Generate Release Tag & Metadata
     needs: [validate, build, deploy-worker, verify-worker, smoke-tests, security-checks]
-    if: false  # Disabled: GITHUB_TOKEN cannot push workflow files
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: Production
     permissions: write-all
