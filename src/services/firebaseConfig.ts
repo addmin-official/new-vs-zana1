@@ -30,13 +30,36 @@ export const FALLBACK_FIREBASE_CONFIG = {
   recaptchaSiteKey: "AIzaSyDpcEo0LJdjOg_ATmnFdrwVMKAX_MSOLVE",
 };
 
+const EXPIRED_LEGACY_KEYS = new Set<string>([
+  "AIzaSyD_u4I9xPn6dFoSnDTe9pyNMQwltDEpjN0",
+  "AIzaSyCE9MMzIC_o6dPDsrfYUlbZ8EMWAV6rdDI",
+]);
+
+const isUsableEnvValue = (val: string | undefined): val is string => {
+  if (!val || !val.trim()) return false;
+  if (val.includes("YOUR_") || val.includes("placeholder") || val.includes("FakeKey")) return false;
+  if (EXPIRED_LEGACY_KEYS.has(val.trim())) return false;
+  return true;
+};
+
 // Helper: read from Vite env first, then Node env, then canonical fallback
-const readEnv = (key: string, fallbackKey?: keyof typeof FALLBACK_FIREBASE_CONFIG): string => {
-  const val = viteEnv[key] || nodeEnv[key];
-  if (val && !val.includes("YOUR_") && !val.includes("placeholder") && !val.includes("FakeKey")) {
-    return val;
+const readEnv = (
+  key: string,
+  fallbackKey?: keyof typeof FALLBACK_FIREBASE_CONFIG,
+  aliasKeys: string[] = []
+): string => {
+  const candidates = [
+    viteEnv[key],
+    nodeEnv[key],
+    ...aliasKeys.flatMap((alias) => [viteEnv[alias], nodeEnv[alias]]),
+  ];
+  for (const val of candidates) {
+    if (isUsableEnvValue(val)) {
+      return val.trim();
+    }
   }
-  if (isTest && !val) {
+  const rawPrimary = viteEnv[key] || nodeEnv[key];
+  if (isTest && !rawPrimary) {
     return "";
   }
   return fallbackKey ? FALLBACK_FIREBASE_CONFIG[fallbackKey] : "";
@@ -52,7 +75,9 @@ export const firebaseConfig = {
   measurementId: readEnv("VITE_FIREBASE_MEASUREMENT_ID", "measurementId"),
   firestoreDatabaseId: readEnv("VITE_FIREBASE_DATABASE_ID", "firestoreDatabaseId"),
   oAuthClientId: readEnv("VITE_FIREBASE_OAUTH_CLIENT_ID", "oAuthClientId"),
-  recaptchaSiteKey: readEnv("VITE_FIREBASE_RECAPTCHA_SITE_KEY", "recaptchaSiteKey"),
+  recaptchaSiteKey: readEnv("VITE_FIREBASE_RECAPTCHA_SITE_KEY", "recaptchaSiteKey", [
+    "VITE_FIREBASE_recaptcha_Site_Key",
+  ]),
 };
 
 export const isFirebaseConfigured = (
@@ -63,6 +88,7 @@ export const isFirebaseConfigured = (
   if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) return false;
   if (!projectId || typeof projectId !== "string" || !projectId.trim()) return false;
   if (apiKey.includes("FakeKey") || apiKey.includes("placeholder") || apiKey.includes("YOUR_")) return false;
+  if (EXPIRED_LEGACY_KEYS.has(apiKey.trim())) return false;
   if (projectId.includes("placeholder") || projectId.includes("YOUR_")) return false;
   return true;
 };
