@@ -76,7 +76,7 @@ export const DialecticDebateComponent: React.FC = () => {
           مەیدانی دیبەیت و بەرگری لە ڕاستیی زانستی:
         </label>
         <div className="flex flex-wrap gap-2">
-          {topics.map((t) => (
+          {topics.map((t: DialecticDebateTopic) => (
             <button
               key={t.id}
               onClick={() => handleSelectTopic(t)}

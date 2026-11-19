@@ -59,12 +59,12 @@ test("PedagogyEngine - processes Leitner spaced review progression and reset on 
 
   // Successful review promotes box
   const afterSuccess = PedagogyEngine.processLeitnerReview(testItem.id, true);
-  const updatedItem = afterSuccess.find((i) => i.id === testItem.id);
+  const updatedItem = afterSuccess.find((i: { id: string; box: number }) => i.id === testItem.id);
   assert.strictEqual(updatedItem?.box, Math.min(5, initialBox + 1));
 
   // Mistake resets directly back to Box 1
   const afterMistake = PedagogyEngine.processLeitnerReview(testItem.id, false);
-  const resetItem = afterMistake.find((i) => i.id === testItem.id);
+  const resetItem = afterMistake.find((i: { id: string; box: number }) => i.id === testItem.id);
   assert.strictEqual(resetItem?.box, 1);
 });
 

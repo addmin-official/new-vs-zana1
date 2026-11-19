@@ -2279,6 +2279,12 @@ export default {
           });
         }
         try {
+          const now = Date.now();
+          // Auto-expire trials and active subscriptions that have passed their end date
+          await env.DB.prepare(
+            "UPDATE subscriptions SET status = 'expired', updated_at = ? WHERE status IN ('trial', 'active') AND trial_ends_at < ?"
+          ).bind(now, now).run().catch(() => {});
+
           let res: { results?: unknown[] } | null = null;
           try {
             res = await env.DB.prepare(

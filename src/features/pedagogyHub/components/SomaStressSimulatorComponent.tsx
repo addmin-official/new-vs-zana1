@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { SomaQuestion } from "../pedagogyTypes.ts";
 import { PedagogyEngine } from "../pedagogyEngine.ts";
 import { ZanaButton } from "../../../components/ZanaButton.tsx";
 import {
@@ -53,7 +54,7 @@ export const SomaStressSimulatorComponent: React.FC = () => {
     }));
   };
 
-  const currentQ = questions.find((q) => q.number === activeQuestionNum) || questions[0];
+  const currentQ = questions.find((q: SomaQuestion) => q.number === activeQuestionNum) || questions[0];
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
@@ -63,7 +64,7 @@ export const SomaStressSimulatorComponent: React.FC = () => {
 
   const calculateScore = () => {
     let correct = 0;
-    questions.forEach((q) => {
+    questions.forEach((q: SomaQuestion) => {
       if (markedAnswers[q.number] === q.correctKey) {
         correct++;
       }
@@ -148,7 +149,7 @@ export const SomaStressSimulatorComponent: React.FC = () => {
 
               {/* Multiple choice options */}
               <div className="space-y-2 mt-4">
-                {currentQ.options.map((opt) => (
+                {currentQ.options.map((opt: { key: "A" | "B" | "C" | "D"; text: string }) => (
                   <div
                     key={opt.key}
                     onClick={() => handleBubbleClick(currentQ.number, opt.key)}
@@ -208,7 +209,7 @@ export const SomaStressSimulatorComponent: React.FC = () => {
 
             {/* Bubble Matrix */}
             <div className="space-y-3">
-              {questions.map((q) => {
+              {questions.map((q: SomaQuestion) => {
                 const selected = markedAnswers[q.number];
                 return (
                   <div

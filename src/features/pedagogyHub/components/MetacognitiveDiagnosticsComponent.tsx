@@ -19,7 +19,7 @@ export const MetacognitiveDiagnosticsComponent: React.FC = () => {
   const [logs, setLogs] = useState(() => PedagogyEngine.getMetacognitiveLogs());
 
   const currentQ = questions[currentIdx];
-  const isCorrect = selectedKey !== null && currentQ.options.find((o) => o.key === selectedKey)?.isCorrect;
+  const isCorrect = selectedKey !== null && currentQ.options.find((o: { key: string; isCorrect: boolean }) => o.key === selectedKey)?.isCorrect;
 
   const handleSubmitAnswer = () => {
     if (!selectedKey) return;
@@ -54,7 +54,7 @@ export const MetacognitiveDiagnosticsComponent: React.FC = () => {
   };
 
   const radarSummary = PedagogyEngine.getMetacognitiveRadarSummary(logs);
-  const totalDiagnosed = Object.values(radarSummary).reduce((a, b) => a + b, 0);
+  const totalDiagnosed = (Object.values(radarSummary) as number[]).reduce((a: number, b: number) => a + b, 0);
 
   return (
     <div className="space-y-6 text-right" dir="rtl">
@@ -97,7 +97,7 @@ export const MetacognitiveDiagnosticsComponent: React.FC = () => {
 
             {/* Options */}
             <div className="space-y-2 pt-2">
-              {currentQ.options.map((opt) => {
+              {currentQ.options.map((opt: { key: string; text: string; isCorrect: boolean }) => {
                 const isSelected = selectedKey === opt.key;
                 let optStyle = "border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800";
 

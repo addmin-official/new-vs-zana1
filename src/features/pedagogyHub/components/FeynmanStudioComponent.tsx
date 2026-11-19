@@ -44,7 +44,7 @@ export const FeynmanStudioComponent: React.FC = () => {
           چەمکی زانستی بۆ تاقیکردنەوە هەڵبژێرە (پۆلی ٩ تا ١٢):
         </label>
         <div className="flex flex-wrap gap-2">
-          {concepts.map((c) => (
+          {concepts.map((c: FeynmanConcept) => (
             <button
               key={c.id}
               onClick={() => {
